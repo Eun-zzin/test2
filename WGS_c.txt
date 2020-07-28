@@ -28,6 +28,62 @@ java -jar /BiO/Install/picard-tools-2.22.3/picard.jar MarkDuplicates TMP_DIR=TEM
 # (selective command line, but important) sorting and indexing
 java -jar /BiO/Install/picard-tools-2.22.3/picard.jar SortSam TMP_DIR=TEMP_PICARD VALIDATION_STRINGENCY=LENIENT SO=coordinate I=SRR1002940_dedup.sam O=SRR1002940_dedup.bam CREATE_INDEX=true
 
-# 
+# <Firstpass> find region by using dbSNP file (min 2 files.)
+java – Xmx8g -jar /BiO/Install/gatk-4.1.7.0/ gatk-package-4.1.7.0-local.jar BaseRecalibrator -R /BiO/Education/WGS/REF/hg19.fa -I SRR1002940_dedup.bam --known-sites /BiO/Education/WGS/REF/ dbsnp_138.hg19.vcf --known-sites /BiO/Education/WGS/REF/ 1000GENOMES-phase_3_indel.vcf
+- O SRR1002940_recal_pass1.table
+
+# <Firstpass> apply table file to bam file. It's called Recalibaration
+java -Xmx8g -jar /BiO/Install/gatk-4.1.7.0/ gatk-package-4.1.7.0-local.jar ApplyBQSR -R /BiO/Education/WGS/REF/hg19.fa -I SRR1002940_dedup.bam --bqsr-recal-file SRR1002940_recal_pass1.table -O SRR1002940_recal_pass1.bam
+
+# <Secondpass> for more elaborate result, doing same steps 
+java -Xmx8g -jar /BiO/Install/gatk-4.1.7.0/ gatk-package-4.1.7.0-local.jar BaseRecalibrator-R /BiO/Education/WGS/REF/hg19.fa -I SRR1002940_recal_pass1.bam --known-sites /BiO/Education/WGS/REF/ dbsnp_138.hg19.vcf --known-sites /BiO/Education/WGS/REF/ 1000GENOMES-phase_3_indel.vcf -O SRR1002940_recal_pass2.table
+
+# <Secondpass> recalibration
+java -Xmx8g -jar /BiO/Install/gatk-4.1.7.0/ gatk-package-4.1.7.0-local.jar ApplyBQSR -R /BiO/Education/WGS/REF/hg19.fa -I SRR1002940_recal_pass1.bam -bqsr SRR1002940_recal_pass2.table -O SRR1002940_recal_pass2.bam
+
+# calling variants for all samples with GATK
+java -Xmx8g -jar /BiO/Install/gatk-4.1.7.0/gatk-package-4.1.7.0-local.jar HaplotypeCaller -R /BiO/Education/WGS/REF/hg19.fa -I SRR1002940_recal_pass2.bam -O SRR1002940.rawVariants.g.vcf -ERC GVCF --standard-min-confidence-threshold-for-calling 20
+
+# Applying Genotype with GATK
+java -Xmx8g -jar /BiO/Install/gatk-4.1.7.0/gatk-pakage-4.1.7.0-local.jar GenotypeGVCFs -R /BiO/Education/WGS/REF/hg19.fa -V SRR1002940.rawVariants.g.vcf -O SRR1002940_genotype.vcf
+
+# Extracting SNPs with GATK
+java -Xmx8g -jar /BiO/Install/gatk-4.1.7.0/gatk-package-4.1.7.0-local.jar SelectVariants -R /BiO/Education/WGS/REF/hg19.fa -V SRR1002940_genotype.vcf --select-type-to-include SNP -O SRR1002940.rawSNPs.vcf
+
+# Extracting Indel with GATK
+java -Xmx8g -jar /BiO/Install/gatk-4.1.7.0/gatk-package-4.1.7.0-local.jar SelectVariants -R /BiO/Education/WGS/REF/hg19.fa -V SRR1002940_genotype.vcf --select-type-to-include INDEL -O SRR1002940.rawINDELs.vcf
+
+# filtering SNPs with GATK
+java -Xmx8g -jar /BiO/Install/gatk-4.1.7.0/gatk-package-4.1.7.0-local.jar VariantFiltration -R /BiO/Education/WGS/REF/hg19.fa -V SRR1002940.rawSNPs.vcf -O SRR1002940.rawSNPs.filtered.vcf --filter-name "." --filter-expression "QD < 2.0 || FS > 60.0 || MQ < 40.0 || HaplotypeScore > 13.0 || MappingQualityRankSum < -12.5 || ReadPosRankSum < -8.0"
+
+# filtering Indel with GATK
+java -Xmx8g -jar /BiO/Install/gatk-4.1.7.0/gatk-package-4.1.7.0-local.jar VariantFiltration -R /BiO/Education/WGS/REF/hg19.fa -V SRR1002940.rawINDELs.vcf -O SRR1002940.rawINDELs.filtered.vcf --filter-name "." --filter-expression "QD < 2.0 || FS > 200.0 || ReadPosRankSum < -20.0"
+
+# merge Indels and SNPs---------------------------------------------------------------------
+
+# Using GATK
+java -Xmx8g -jar /BiO/Install/gatk-4.1.7.0/gatk-package-4.1.7.0-local.jar SortVcf -I SRR1002940.rawSNPs.filtered.vcf -I SRR1002940.rawINDELs.filtered.vcf -O SRR1002940.Filtered.variant.vcf
+
+# Using Picard
+java -Xmx8g -jar /BiO/Install/picard-tools-2.22.3/picard.jar MergeVcfs I=SRR1002940.rawSNPs.filtered.vcf I= SRR1002940.rawINDELs.filtered.vcf O=SRR1002940.Filtered.variant.vcf
+
+# Annotation------------------------------------------------------------------------------- 
+
+# Using Annovar
+
+# Extracting which startwith #, included "PASS"
+egrep "^#|PASS" SRR1002940.Filtered.variant.vcf > SRR1002940.Filtered.variant.PASS.vcf
+
+# annotation db with vcf file (PASS file)
+perl /BiO/Install/annovar/table_annovar.pl SRR1002940.Filtered.variant.PASS.vcf /BiO/Education/Education/WGS/humandb/ -buildver hg19 -out SRR1002940 -remove -protocol refGene,cytoBand,avsnp138,clinvar_20190305 -operation g,r,f,f -nastring . -vcfinput
+
+# Using snpEff
+
+# annotation GeneName to vcf file
+java -jar /BiO/Acess/home/kbioedu19/snpEff/snpEff/snpEff.jar -v hg19 SRR1002940.Filtered.variant.PASS.vcf > SRR1002940.snpEff.vcf
+
+# annotation rs number to vcf file
+java -jar /BiO/Access/home/hykim/YUHS/DATA2/snpEff/ SnpSift.jar annotate /BiO/Education/WGS/REF/ dbsnp_138.hg19.vcf SRR1002940.snpEff.vcf > SRR1002940.SnpEff.dbSNP138.vcf
+
  
 
